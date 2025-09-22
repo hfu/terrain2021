@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Usage: ogr2ogr_id ID
+# Small wrapper to run the same ogr2ogr command as in the Rakefile for one ID.
+# Expects DATA_DIR and optionally RUN env var to be set. Defaults:
+DATA_DIR="data"
+ID="$1"
+
+mkdir -p "$DATA_DIR"
+
+SQL="SELECT poly.*, gcluster.* FROM Poly_${ID} poly LEFT JOIN '/vsizip/vsicurl/https://gisstar.gsi.go.jp/terrain2021/Poly_${ID}.zip/Poly_${ID}/GlobalCluster_${ID}.dbf'.GlobalCluster_${ID} gcluster ON poly.polyID = gcluster.POLYID"
+
+OUTFILE="$DATA_DIR/${ID}.fgb"
+SRC="/vsizip/vsicurl/https://gisstar.gsi.go.jp/terrain2021/Poly_${ID}.zip/Poly_${ID}/Poly_${ID}.shp"
+
+echo "ID=${ID} -> ${OUTFILE}"
+
+if [ "${RUN:-0}" != "1" ]; then
+  echo "(dry-run) not executing ogr2ogr for ID=${ID}"
+  echo "ogr2ogr -f FlatGeobuf -nlt PROMOTE_TO_MULTI -skipfailures -progress -sql \"${SQL}\" \"${OUTFILE}\" \"${SRC}\""
+  exit 0
+fi
+
+# Execute ogr2ogr with flags to handle mixed Polygon/MultiPolygon and skip bad features
+ogr2ogr -f FlatGeobuf -nlt PROMOTE_TO_MULTI -skipfailures -progress -sql "${SQL}" "${OUTFILE}" "${SRC}"
+ret=$?
+if [ $ret -ne 0 ]; then
+  echo "ogr2ogr failed for ID=${ID} (exit $ret)" >&2
+fi
+exit $ret
