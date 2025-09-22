@@ -4,7 +4,7 @@ set -euo pipefail
 # Usage: ogr2ogr_id ID
 # Small wrapper to run the same ogr2ogr command as in the Rakefile for one ID.
 # Expects DATA_DIR and optionally RUN env var to be set. Defaults:
-DATA_DIR="data"
+DATA_DIR="${DATA_DIR:-data}"
 ID="$1"
 
 mkdir -p "$DATA_DIR"
