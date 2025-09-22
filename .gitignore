@@ -1,0 +1,8 @@
+# Ignore generated flatgeobuf files
+*.fgb
+
+# Ignore data directory contents (but keep directory)
+data/
+!data/.gitkeep
+joblog.txt
+Rakefile
