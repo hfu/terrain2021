@@ -1,60 +1,138 @@
-terrain2021 — build instructions
+# terrain2021 — build instructions / ビルド手順
 
-Overview
+NOTE: This project prefers simple foreground execution for casual sharing. Use `make serve` to run a foreground server (stoppable with Ctrl-C).
 
-This repository downloads the Terrain2021 Poly datasets, converts each Poly_NNN shapefile into FlatGeobuf (.fgb) and finally merges and post-processes them into a single dataset (terrain2021.fgb), then applies attribute filtering to produce terrain22.fgb.
+## English (short)
 
-Safety
+Purpose
 
-- This process downloads many large files and may use significant network and disk resources. Ensure you have enough free space.
-- By default the produce step runs parts creation into `parts/`. The final merged datasets are written to `data/`.
-
-Files & layout
-
-- `ids.txt` — ordered list of Poly IDs to produce (currently ordered small-first)
-- `parts/` — per-part .fgb files produced by the `produce` target
-- `data/` — holds final merged files `terrain2021.fgb` and `terrain22.fgb`
-- `bin/ogr2ogr_id` — small wrapper to run ogr2ogr for a single ID; honors DATA_DIR and RUN env vars
-- `Makefile` — contains targets: produce, merge, transform, clean
+Produce per-part FlatGeobuf files from the Terrain2021 Poly source, merge them, and derive a filtered product (terrain22.fgb).
 
 Quick commands
 
-- Smoke test (dry-run):
+- Dry-run smoke test:
+
   cat ids.txt | head -n5 | parallel -j2 'DATA_DIR=parts bin/ogr2ogr_id {}'
 
-- Produce (execute, 6 parallel jobs):
+- Produce (parallel):
+
   make produce
 
-- Merge all parts into single FlatGeobuf:
+- Merge parts:
+
   make merge
 
-- Transform attributes to create terrain22 (see Transform section below):
+- Transform attributes:
+
   make transform
 
-Transform / attribute filtering
+Files & layout
 
-The attribute transformation logic is taken from https://github.com/optgeo/terrain22/blob/908263906dc5e1af2de5b62a05a1246475a7e2e9/filter.rb (see lines ~6-40). That script reads GeoJSON features and sets a single property `terrain22` based on existing properties `b.GCLUSTER15` and `a.Sinks`.
+- `ids.txt` — list of Poly IDs
+- `parts/` — per-ID .fgb files
+- `data/` — aggregate outputs (terrain2021.fgb, terrain22.fgb)
+- `bin/ogr2ogr_id` — wrapper to create one part
+- `bin/serve.py` — minimal local static server (maps /data and /parts)
+- `bin/start_tunnel.sh` — helper to run cloudflared with ./tunnel/config.yml
 
-We can implement this logic in ogr2ogr with a SQL-based approach combined with a virtual field construction. The general strategy:
+Serve & publish (local + Cloudflare Tunnel)
 
-1. Use ogr2ogr -sql to select existing attributes and add a computed field `terrain22` using a CASE expression. Example pattern (pseudo-SQL):
+- Start local server:
 
-   ogr2ogr -f FlatGeobuf data/terrain22.fgb data/terrain2021.fgb -sql "SELECT *, CASE WHEN b_GCLUSTER15=2 THEN 1 WHEN b_GCLUSTER15=3 THEN 2 WHEN b_GCLUSTER15=13 THEN 3 WHEN b_GCLUSTER15=12 THEN 4 WHEN b_GCLUSTER15=5 THEN 5 WHEN b_GCLUSTER15=4 THEN 6 WHEN b_GCLUSTER15=14 THEN 7 WHEN b_GCLUSTER15=10 THEN 8 WHEN b_GCLUSTER15=11 AND a_Sinks=0 THEN 9 WHEN b_GCLUSTER15=11 AND a_Sinks<>0 THEN 10 ... ELSE NULL END AS terrain22 FROM layer"
+  make serve
 
-2. Field naming: Shapefile/FlatGeobuf field names may map differently; before writing the exact SQL we recommend inspecting `ogrinfo -al data/terrain2021.fgb` to get exact field names (like `b.GCLUSTER15` may appear as `b_GCLUSTER15` or similar).
+  (or `python3 bin/serve.py --host 127.0.0.1 --port 8000`)
 
-3. If the CASE is long, use a temporary SQL view or a small script to generate the SQL text.
+- Verify:
 
-Limitations and considerations
+  curl -I [http://127.0.0.1:8000/data/](http://127.0.0.1:8000/data/)
 
-- GDAL SQL supports CASE and simple arithmetic/conditional expressions; the mapping in `filter.rb` is a direct CASE mapping and should be expressible in SQL.
-- The `sinks == 0.0` checks map to numeric equality; be cautious about NULLs.
-- If SQL gets too big or field names are awkward, you can do an intermediate GeoJSON export, run the Ruby filter.rb, and re-import. That is slower but easiest to match exactly.
+  curl -I [http://127.0.0.1:8000/parts/](http://127.0.0.1:8000/parts/)
 
-Suggested next steps
+- Run tunnel (after editing `tunnel/config.yml`):
 
-1. If you want me to run the full production now: I will move existing `data/` to `parts/`, create an empty `data/`, remove `ids_remaining.txt` and `ids.txt.bak`, then run `make produce` which uses 6 parallel jobs.
+  make tunnel
 
-2. After production completes, run `make merge` to create `data/terrain2021.fgb`, then run `make transform`. I can implement the exact ogr2ogr SQL for `transform` if you confirm you want a pure-ogr2ogr approach; otherwise I can include a fallback (export -> filter.rb -> reimport).
+  (or `bash bin/start_tunnel.sh`)
 
-Tell me to proceed with the full run now, or ask for the pure-ogr2ogr `transform` SQL to be implemented first. If you want me to proceed, I'll start the run and report progress.
+Security note
+
+Protect published hostnames with Cloudflare Access or similar; avoid placing secrets in `data/` or `parts/`.
+
+Why wrapper changed
+
+`bin/ogr2ogr_id` now forwards SIGINT/SIGTERM to the `ogr2ogr` child and monitors its controller (parent PID); it kills the child if the controller disappears to avoid orphan processes.
+
+## Japanese (簡潔)
+
+目的
+
+Terrain2021 の Poly データから各パートの FlatGeobuf を生成し、結合して属性フィルタ済みの成果物（terrain22.fgb）を作ること。
+
+主要コマンド
+
+- ドライラン検査:
+
+  cat ids.txt | head -n5 | parallel -j2 'DATA_DIR=parts bin/ogr2ogr_id {}'
+
+- 生成:
+
+  make produce
+
+- 結合:
+
+  make merge
+
+- 属性変換:
+
+  make transform
+
+ファイル構成
+
+- `ids.txt` — Poly ID の一覧
+- `parts/` — 個別生成の .fgb
+- `data/` — 集約出力（terrain2021.fgb, terrain22.fgb）
+- `bin/ogr2ogr_id` — 単一パート生成のラッパー
+- `bin/serve.py` — ローカルで `/data` と `/parts` を配信する簡易サーバ
+- `bin/start_tunnel.sh` — `./tunnel/config.yml` を使って cloudflared を起動するヘルパー
+
+公開手順（ローカル＋Cloudflare Tunnel）
+
+- ローカル起動:
+
+  make serve
+
+  （または `python3 bin/serve.py --host 127.0.0.1 --port 8000`）
+
+- 動作確認:
+
+  curl -I [http://127.0.0.1:8000/data/](http://127.0.0.1:8000/data/)
+
+  curl -I [http://127.0.0.1:8000/parts/](http://127.0.0.1:8000/parts/)
+
+- トンネル起動（`tunnel/config.yml` 編集後）:
+
+  make tunnel
+
+  （または `bash bin/start_tunnel.sh`）
+
+セキュリティ
+
+公開ホストは Cloudflare Access 等で保護してください。`data/` や `parts/` に機密を置かないでください。
+
+ラッパーの変更理由
+
+`bin/ogr2ogr_id` はシグナル伝播とコントローラ監視を行うようにしたため、親が死んだ場合でも ogr2ogr の orphan が残らないようになっています。
+
+Notes / 備考
+
+- スクリプト実行権を確認:
+
+  chmod +x bin/serve.py bin/start_tunnel.sh bin/ogr2ogr_id
+
+- 長時間実行は tmux/screen などで管理すると安定します。
+
+Service and session templates
+
+This project intentionally prefers simple foreground execution for casual sharing and testing. Use `make serve` which runs `bin/serve.py` in the foreground and can be stopped with Ctrl-C. Examples and templates for background/system services were removed to keep the repo minimal and focused on interactive use. For interactive long-running sessions you can still use `docs/tmux.md`.
+

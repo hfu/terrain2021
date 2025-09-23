@@ -2,7 +2,10 @@
 set -euo pipefail
 
 # Usage: ogr2ogr_id ID
-# Small wrapper to run the same ogr2ogr command as in the Rakefile for one ID.
+# Robust wrapper to run the same ogr2ogr command as in the Rakefile for one ID.
+# Features:
+# - forwards SIGINT/SIGTERM to the ogr2ogr child
+# - monitors the original parent PID and kills the child if the parent disappears
 # Expects DATA_DIR and optionally RUN env var to be set. Defaults:
 DATA_DIR="${DATA_DIR:-data}"
 ID="$1"
@@ -22,8 +25,39 @@ if [ "${RUN:-0}" != "1" ]; then
   exit 0
 fi
 
-# Execute ogr2ogr with flags to handle mixed Polygon/MultiPolygon and skip bad features
-ogr2ogr -f FlatGeobuf -nlt PROMOTE_TO_MULTI -skipfailures -progress -sql "${SQL}" "${OUTFILE}" "${SRC}"
+# Remember the parent PID (the process that launched this script). If that PID disappears
+# we assume the controller died and we should kill the child to avoid orphaned ogr2ogr.
+CONTROLLER_PID=$PPID
+
+kill_child_and_exit() {
+  if [ -n "${CHILD_PID:-}" ]; then
+    echo "Terminating ogr2ogr (pid ${CHILD_PID})"
+    kill -TERM "${CHILD_PID}" 2>/dev/null || true
+    # give it a moment
+    sleep 2
+    kill -KILL "${CHILD_PID}" 2>/dev/null || true
+  fi
+  exit 130
+}
+
+trap 'kill_child_and_exit' INT TERM
+
+# Start ogr2ogr as a child so we can manage it
+ogr2ogr -f FlatGeobuf -nlt PROMOTE_TO_MULTI -skipfailures -progress -sql "${SQL}" "${OUTFILE}" "${SRC}" &
+CHILD_PID=$!
+
+# Monitor loop: wait for child, and also check if controller PID is gone (reparented to 1)
+while kill -0 "${CHILD_PID}" 2>/dev/null; do
+  # If controller disappeared, kill child and exit
+  if ! ps -p "${CONTROLLER_PID}" >/dev/null 2>&1; then
+    echo "Controller PID ${CONTROLLER_PID} disappeared; killing child ${CHILD_PID} to avoid orphaning"
+    kill_child_and_exit
+  fi
+  sleep 1
+done
+
+# Wait for the child to reap and return its exit code
+wait ${CHILD_PID}
 ret=$?
 if [ $ret -ne 0 ]; then
   echo "ogr2ogr failed for ID=${ID} (exit $ret)" >&2

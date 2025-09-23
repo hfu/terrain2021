@@ -1,5 +1,7 @@
 .PHONY: produce merge transform clean readme
 
+.PHONY: serve tunnel
+
 transform:
 	@echo "Transforming attributes to create data/terrain22.fgb (streaming, no large temps)"
 	@mkdir -p data
@@ -33,7 +35,7 @@ transform:
 	WHEN \"gcluster.GCLUSTER15\"=15 AND \"poly.Sinks\"<>0 THEN 22 \
 	ELSE NULL END AS terrain22 FROM poly" \
 	| jq -c '(.properties) |= ( { Sinks: ."poly.Sinks", GCLUSTER40: ."gcluster.GCLUSTER40", GCLUSTER15: ."gcluster.GCLUSTER15", terrain22: .terrain22 } )' \
-	| ogr2ogr -f FlatGeobuf data/terrain22.fgb '/vsistdin?buffer_limit=-1' -nln terrain22 -skipfailures
+	| ogr2ogr -f FlatGeobuf data/terrain22.fgb '/vsistdin?buffer_limit=-1' -wrapdateline -nln terrain22 -skipfailures
 
 produce: ids.txt bin/ogr2ogr_id
 	@echo "Producing per-ID FlatGeobuf files (GNU parallel -j6; fallback to xargs)." \
@@ -41,22 +43,16 @@ produce: ids.txt bin/ogr2ogr_id
 	# Prefer GNU parallel for robust production runs; fallback to xargs if missing
 	@if command -v parallel >/dev/null 2>&1 ; then \
 		echo "Using GNU parallel -j6 (DATA_DIR=parts)" ; \
-		cat ids.txt | parallel -j6 --joblog joblog.txt --halt soon,fail=1 --linebuffer 'DATA_DIR=parts ./bin/ogr2ogr_id {}' ; \
+		cat ids.txt | parallel -j7 --joblog joblog.txt --halt soon,fail=1 --linebuffer 'DATA_DIR=parts ./bin/ogr2ogr_id {}' ; \
 	else \
 		echo "GNU parallel not found; falling back to xargs (P=4, DATA_DIR=parts)" ; \
 		cat ids.txt | xargs -n1 -P4 -I{} sh -c 'DATA_DIR=parts ./bin/ogr2ogr_id {}' ; \
 	fi
 
 merge: parts/*.fgb
-	@echo "Merging parts into data/terrain2021.fgb"
+	@echo "Merging parts into data/terrain2021.fgb (GeoJSONSeq streaming, EPSG:4326)"
 	@mkdir -p data
-	# Create dataset from the first part, then append others to preserve spatial index support
-	first=$$(ls parts/*.fgb | head -n1) ; \
-	if [ -z "$$first" ]; then echo "no parts found"; exit 1; fi ; \
-	ogr2ogr -f FlatGeobuf data/terrain2021.fgb "$$first" ; \
-	for p in $$(ls parts/*.fgb | tail -n +2); do \
-		ogr2ogr -f FlatGeobuf -append -update data/terrain2021.fgb "$$p" ; \
-	done
+	@./bin/merge_parts.sh
 
 clean:
 	rm -rf parts/* data/terrain*.fgb joblog.txt
@@ -64,3 +60,11 @@ clean:
 readme:
 	@echo "Generate README.md"
 	@ruby -e "print File.read('README.md') if File.exist?('README.md')"
+
+serve:
+	@echo "Run local static server exposing /data and /parts"
+	@python3 bin/serve.py --host 127.0.0.1 --port 8000
+
+tunnel:
+	@echo "Start cloudflared using tunnel/config.yml (use bin/start_tunnel.sh)"
+	@bash bin/start_tunnel.sh
