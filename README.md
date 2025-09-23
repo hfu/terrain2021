@@ -74,6 +74,24 @@ Serve & publish (local + Cloudflare Tunnel) | ローカルとトンネル公開
 
   (or `bash bin/start_tunnel.sh`)
 
+Cloudflared / Tunnel deployment (brief) | Cloudflared トンネル（簡潔）
+
+- Prerequisites: install `cloudflared` and authenticate your tunnel per Cloudflare docs.
+- 前提: `cloudflared` をインストールし、トンネルを作成・認証してください（Cloudflare の手順に従う）。
+
+- Example: run the local server (foreground) and start a tunnel that forwards to it.
+
+  1. Run local server:
+
+    `python3 bin/serve.py --host 127.0.0.1 --port 8000 --cors-origin https://transient.optgeo.org`
+
+  2. Start cloudflared in another terminal (uses `tunnel/config.yml`):
+
+    `bash bin/start_tunnel.sh`
+
+- Note: Ensure `tunnel/config.yml` has the correct `ingress` service URL (e.g. `http://127.0.0.1:8000/data`).
+- 注意: `tunnel/config.yml` の `ingress` が正しいローカル URL（例: `http://127.0.0.1:8000/data`）を指すようにしてください。
+
 CORS example (allow `transient.optgeo.org`) | CORS 例（transient.optgeo.org を許可）
 
 Run the server and allow requests from the transient.optgeo.org origin:
@@ -110,5 +128,22 @@ Removed background/service templates
 To keep the repo focused on simple interactive use, service/unit templates for background execution were removed from the main tree. Use `docs/tmux.md` for long sessions or add your own system service in a private config if needed.
 
 サービスやデーモン用テンプレートはこのリポジトリ本体から削除しています。長時間実行は `docs/tmux.md` を参照するか、必要なら個別に systemd/launchd の設定を用意してください。
+
+
+Attribution / 出所と謝辞
+
+- This project builds on public sources and tools. Where appropriate we link back to original files or datasets used; please consult the source URLs embedded in scripts such as `bin/ogr2ogr_id` for dataset locations.
+
+- Data source and acknowledgement: the Terrain2021 (terrain2021) Poly dataset provided via the GISSTAR service (Geospatial Information Authority of Japan) is the primary input dataset used here. We are grateful to GIS and data providers for making this dataset available. Please cite GISSTAR / Terrain2021 when reusing derived products.
+
+- Acknowledgements: thank you to the authors and maintainers of GDAL/OGR and FlatGeobuf. Community discussions about streaming GeoJSONSeq and FlatGeobuf conversion also informed parts of this implementation.
+
+出所と謝辞
+
+- 本プロジェクトは公開情報とツールに基づいて構築しています。使用データや参照元は `bin/ogr2ogr_id` 等のスクリプト内に記載していますのでご確認ください。
+
+- データ出所と謝辞: 本作業で基礎データとして利用した Terrain2021（terrain2021）の Poly データは、国土地理院（GSI）の GISSTAR サービスから提供されています。データ提供者の皆様に感謝します。派生成果物を公開・再利用する際は GISSTAR / Terrain2021 の出典を明記してください。
+
+- 謝辞: GDAL/OGR や FlatGeobuf の開発者・メンテナ、および GeoJSONSeq や FlatGeobuf のストリーミング変換に関するコミュニティの議論に感謝します。
 
 
