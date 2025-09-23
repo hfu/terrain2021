@@ -74,6 +74,17 @@ Serve & publish (local + Cloudflare Tunnel) | ローカルとトンネル公開
 
   (or `bash bin/start_tunnel.sh`)
 
+CORS example (allow `transient.optgeo.org`) | CORS 例（transient.optgeo.org を許可）
+
+Run the server and allow requests from the transient.optgeo.org origin:
+
+`python3 bin/serve.py --host 0.0.0.0 --port 8000 --cors-origin https://transient.optgeo.org`
+
+Verify with curl (Origin header):
+
+`curl -I -H "Origin: https://transient.optgeo.org" http://127.0.0.1:8000/data/`
+
+
 Security | セキュリティ
 
 - Protect published hostnames with Cloudflare Access or similar; avoid placing secrets in `data/` or `parts/`.
