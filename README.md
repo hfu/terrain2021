@@ -74,6 +74,10 @@ Serve & publish (local + Cloudflare Tunnel) | ローカルとトンネル公開
 
   (or `bash bin/start_tunnel.sh`)
 
+Downloadable files
+
+- See `DOWNLOADABLE.md` for a curated list of files that may be downloaded from `transient.optgeo.org` when the tunnel is active.
+
 Cloudflared / Tunnel deployment (brief) | Cloudflared トンネル（簡潔）
 
 - Prerequisites: install `cloudflared` and authenticate your tunnel per Cloudflare docs.

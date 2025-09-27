@@ -61,9 +61,15 @@ readme:
 	@echo "Generate README.md"
 	@ruby -e "print File.read('README.md') if File.exist?('README.md')"
 
+downloadable:
+	@echo "Generate DOWNLOADABLE.md by probing transient.optgeo.org (falls back to local stat)"
+	@./bin/generate_downloadable.py
+
 serve:
 	@echo "Run local static server exposing /data and /parts"
-	@python3 bin/serve.py --host 127.0.0.1 --port 8000
+	@echo "Starting caddy (foreground). Use Ctrl-C to stop." && caddy run --config ./Caddyfile --adapter caddyfile
+
+	# Note: large files may be served externally (e.g. via transient.optgeo.org). See DOWNLOADABLE.md for external download URLs.
 
 tunnel:
 	@echo "Start cloudflared using tunnel/config.yml (use bin/start_tunnel.sh)"
