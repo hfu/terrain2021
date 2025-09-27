@@ -42,24 +42,54 @@ kill_child_and_exit() {
 
 trap 'kill_child_and_exit' INT TERM
 
-# Start ogr2ogr as a child so we can manage it
-ogr2ogr -f FlatGeobuf -nlt PROMOTE_TO_MULTI -skipfailures -progress -sql "${SQL}" "${OUTFILE}" "${SRC}" &
-CHILD_PID=$!
+## Retry wrapper for ogr2ogr
+# Environment variables to control retry behavior:
+# OGR2OGR_RETRIES: number of additional attempts after the first (default: 2)
+# OGR2OGR_BACKOFF: seconds to sleep between attempts (default: 5)
+RETRIES=${OGR2OGR_RETRIES:-2}
+BACKOFF=${OGR2OGR_BACKOFF:-5}
 
-# Monitor loop: wait for child, and also check if controller PID is gone (reparented to 1)
-while kill -0 "${CHILD_PID}" 2>/dev/null; do
-  # If controller disappeared, kill child and exit
-  if ! ps -p "${CONTROLLER_PID}" >/dev/null 2>&1; then
-    echo "Controller PID ${CONTROLLER_PID} disappeared; killing child ${CHILD_PID} to avoid orphaning"
-    kill_child_and_exit
+attempt=0
+while :; do
+  attempt=$((attempt+1))
+  echo "Starting ogr2ogr attempt ${attempt}/${RETRIES+1} for ID=${ID} -> ${OUTFILE}"
+
+  # Start ogr2ogr as a child so we can manage it
+  ogr2ogr -f FlatGeobuf -nlt PROMOTE_TO_MULTI -skipfailures -progress -sql "${SQL}" "${OUTFILE}" "${SRC}" &
+  CHILD_PID=$!
+
+  # Monitor loop: wait for child, and also check if controller PID is gone (reparented to 1)
+  while kill -0 "${CHILD_PID}" 2>/dev/null; do
+    # If controller disappeared, kill child and exit
+    if ! ps -p "${CONTROLLER_PID}" >/dev/null 2>&1; then
+      echo "Controller PID ${CONTROLLER_PID} disappeared; killing child ${CHILD_PID} to avoid orphaning"
+      kill_child_and_exit
+    fi
+    sleep 1
+  done
+
+  # Wait for the child to reap and return its exit code
+  wait ${CHILD_PID}
+  ret=$?
+  if [ $ret -eq 0 ]; then
+    echo "ogr2ogr succeeded for ID=${ID} on attempt ${attempt}"
+    exit 0
   fi
-  sleep 1
-done
 
-# Wait for the child to reap and return its exit code
-wait ${CHILD_PID}
-ret=$?
-if [ $ret -ne 0 ]; then
-  echo "ogr2ogr failed for ID=${ID} (exit $ret)" >&2
-fi
-exit $ret
+  echo "ogr2ogr failed for ID=${ID} on attempt ${attempt} (exit $ret)" >&2
+
+  if [ ${attempt} -le ${RETRIES} ]; then
+    echo "Retrying in ${BACKOFF} seconds..."
+    # ensure any leftover child is killed
+    if kill -0 "${CHILD_PID}" 2>/dev/null; then
+      kill -TERM "${CHILD_PID}" 2>/dev/null || true
+      sleep 2
+      kill -KILL "${CHILD_PID}" 2>/dev/null || true
+    fi
+    sleep ${BACKOFF}
+    continue
+  else
+    echo "All attempts exhausted for ID=${ID}. Giving up." >&2
+    exit $ret
+  fi
+done
