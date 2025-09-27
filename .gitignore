@@ -6,3 +6,6 @@ data/
 !data/.gitkeep
 joblog.txt
 .DS_Store
+
+# Do not commit tunnel credentials/config (may contain UUIDs / secrets)
+tunnel/config.yml
