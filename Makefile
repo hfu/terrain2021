@@ -2,6 +2,32 @@
 
 .PHONY: serve tunnel
 
+# Tippecanoe / PMTiles settings
+TIPPECANOE ?= tippecanoe
+PMTILE_TOOL ?= pmtiles
+TIP_MIN_Z ?= 6
+TIP_MAX_Z ?= 8
+TIP_LAYER ?= terrain22
+# Additional tippecanoe options the user can override on the make command line
+TIPPE_OPTS ?= --force --detect-shared-borders --maximum-tile-bytes=1000000
+
+# Optional streaming simplify settings (empty to skip simplify)
+# TIP_SIMPLIFY_METERS: simplify tolerance in meters (applied after reprojection to TIP_SIMPLIFY_T_SRS)
+# TIP_SIMPLIFY_PRESERVE: set to 1 to use ST_SimplifyPreserveTopology via SQLite dialect (if available)
+# TIP_SIMPLIFY_T_SRS: target SRS for simplify operations (default EPSG:3857)
+TIP_SIMPLIFY_METERS ?= 25
+TIP_SIMPLIFY_PRESERVE ?= 1
+TIP_SIMPLIFY_T_SRS ?= EPSG:3857
+# Numeric EPSG code used inside SQL ST_Transform(...) calls
+TIP_SIMPLIFY_T_SRS_EPSG ?= 3857
+
+# Optional helpers to pre-process geometry before simplify (meters, in metric SRS)
+# If TIP_SEGMENTIZE_METERS is set, ST_Segmentize(ST_Transform(Geometry, TIP_SIMPLIFY_T_SRS_EPSG), TIP_SEGMENTIZE_METERS) will be applied before simplify
+# If TIP_SNAP_GRID_METERS is set, ST_SnapToGrid(...) will be applied (in metric SRS) before simplify
+TIP_SEGMENTIZE_METERS ?= 10
+TIP_SNAP_GRID_METERS ?=
+
+
 transform:
 	@echo "Transforming attributes to create data/terrain22.fgb (streaming, no large temps)"
 	@mkdir -p data
@@ -64,6 +90,19 @@ readme:
 downloadable:
 	@echo "Generate DOWNLOADABLE.md by probing transient.optgeo.org (falls back to local stat)"
 	@./bin/generate_downloadable.py
+
+
+pmtiles: data/terrain22.fgb
+	@echo "Building PMTiles with $(TIPPECANOE) (minZ=$(TIP_MIN_Z) maxZ=$(TIP_MAX_Z) layer=$(TIP_LAYER))"
+	@mkdir -p data
+	# Pass relevant TIP_* environment variables explicitly to the helper script so it sees the simplify settings
+	@TIPPECANOE="$(TIPPECANOE)" TIPPE_OPTS="$(TIPPE_OPTS)" TIP_MIN_Z="$(TIP_MIN_Z)" TIP_MAX_Z="$(TIP_MAX_Z)" \
+	TIP_LAYER="$(TIP_LAYER)" TIP_SIMPLIFY_METERS="$(TIP_SIMPLIFY_METERS)" TIP_SIMPLIFY_PRESERVE="$(TIP_SIMPLIFY_PRESERVE)" \
+	TIP_SIMPLIFY_T_SRS_EPSG="$(TIP_SIMPLIFY_T_SRS_EPSG)" TIP_SEGMENTIZE_METERS="$(TIP_SEGMENTIZE_METERS)" \
+	TIP_SNAP_GRID_METERS="$(TIP_SNAP_GRID_METERS)" RUN="$(RUN)" \
+	bin/pmtiles_stream.sh
+	@echo "PMTiles written to data/terrain22.pmtiles (if your tippecanoe supports PMTiles output)"
+	@echo "If tippecanoe fails to write .pmtiles, re-run with TIPPECANOE=<path-to-newer-tippecanoe> or ask me to add an MBTiles fallback+conversion."
 
 serve:
 	@echo "Run local static server exposing /data and /parts"
