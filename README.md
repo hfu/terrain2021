@@ -1,81 +1,83 @@
 # terrain2021 — build instructions / ビルド手順
 
-Short summary | 簡単な要約
+## Production Pipeline | プロダクション パイプライン
 
-- This repository produces per-part FlatGeobuf files, merges them, and derives a filtered product (`terrain22.fgb`).
-- このリポジトリは各パートの FlatGeobuf を生成・結合し、フィルタ済み成果物（`terrain22.fgb`）を作成します。
+This repository builds PMTiles from Terrain2021 Poly source data using an area-based minzoom pipeline that preserves small urban polygons while controlling low-zoom density.
 
-Foreground-first note | フォアグラウンド優先の方針
+このリポジトリは Terrain2021 Poly データから、小さな都市部ポリゴンを保持しつつ低ズーム密度を制御する area-based minzoom パイプラインを使って PMTiles を構築します。
 
-- This project prefers simple foreground execution for casual sharing: use `make serve` (runs `bin/serve.py`) and stop it with Ctrl-C.
-- このプロジェクトはカジュアルな共有用途を優先し、フォアグラウンド実行を推奨します: `make serve`（`bin/serve.py` を起動）を使い、Ctrl-C で停止してください。
+### Quick Start | クイックスタート
 
-----
+**Production build:**
+```sh
+make pipeline
+```
 
-English / 日本語 — quick reference (paired)
+**Serve locally:**
+```sh
+make serve
+```
 
-Purpose | 目的
+Stop with Ctrl-C | Ctrl-C で停止
 
-- Produce per-part FlatGeobuf files from the Terrain2021 Poly source, merge them, and derive a filtered product (`terrain22.fgb`).
-- Terrain2021 の Poly データから各パートの FlatGeobuf を生成し、結合してフィルタ済み成果物（`terrain22.fgb`）を生成します。
+## Files & Layout | ファイル構成
 
-Quick commands | 主要コマンド
+- `ids.txt` — list of Poly IDs | Poly ID の一覧
+- `parts/` — per-ID .fgb files | 個別生成の .fgb
+- `data/terrain22.pmtiles` — **production output** | **プロダクション出力**
+- `bin/ogr2ogr_id` — part generation wrapper | パート生成ラッパー
+- `bin/pmtiles_area_minzoom_merge.sh` — **main pipeline script** | **メイン パイプライン スクリプト**
+- `bin/serve.py` — local server | ローカルサーバ
+- `tunnel/config.yml` — Cloudflare tunnel config | Cloudflare トンネル設定
 
-- Dry-run smoke test:
+## Production Flow | プロダクションフロー
 
-  cat ids.txt | head -n5 | parallel -j2 'DATA_DIR=parts bin/ogr2ogr_id {}'
+The production pipeline uses area-based per-feature minzoom assignment to preserve small urban polygons while controlling tile density at low zoom levels.
 
-- Produce (parallel):
+**Build:** `make pipeline` runs `produce` → `pmtiles-area-minzoom-merge` and writes `data/terrain22.pmtiles`
 
-  make produce
+**Parameters:** Production defaults are locked in Makefile variables. Override on command line if needed:
+```sh
+# Custom pre-simplification tolerance
+PRE_SIMPLIFY_METERS=20 make pmtiles-area-minzoom-merge
+```
 
-- Merge parts (streaming GeoJSONSeq):
+**Output:** Single `data/terrain22.pmtiles` file (zoom 1-12) optimized for web serving.
 
-  make merge
 
-- Transform attributes (streaming, jq):
 
-  make transform
+Hybrid union mode (preserve small urban fragments)
 
-Files & layout | ファイル構成
+- `make unions` generates `union/*.fgb` per part using `bin/make_unions.sh`. By default it performs an attribute-based union by `terrain22` with robust repairs.
+- In datasets where small, detailed polygons (e.g., urban areas) are easily lost during union, enable the hybrid strategy within each part to “rescue” polygons that union cannot cover:
 
-- `ids.txt` — list of Poly IDs  
-- `ids.txt` — Poly ID の一覧
-- `parts/` — per-ID .fgb files  
-- `parts/` — 個別生成の .fgb
-- `data/` — aggregate outputs (terrain2021.fgb, terrain22.fgb)  
-- `data/` — 集約出力（terrain2021.fgb, terrain22.fgb）
-- `bin/ogr2ogr_id` — wrapper to create one part  
-- `bin/ogr2ogr_id` — 単一パート生成のラッパー
-  - Note: `bin/ogr2ogr_id` now performs a quick existence check and will skip generation if `parts/{ID}.fgb` already exists and is non-empty. It also validates arguments and prints usage when called without an ID.
-- `bin/merge_parts.sh` — streaming merge helper (used by `make merge`)  
-- `bin/merge_parts.sh` — 結合用ストリーミングスクリプト（`make merge` から呼び出す）
-- `bin/serve.py` — minimal local static server (maps /data and /parts)  
-- `bin/serve.py` — ローカル静的配信（/data と /parts を公開）
-- `bin/start_tunnel.sh` — helper to run cloudflared with `./tunnel/config.yml`  
-- `bin/start_tunnel.sh` — cloudflared 起動ヘルパー（`./tunnel/config.yml` 使用）
+  - Overlay strategy (default): `HYBRID_UNION=1 HYBRID_STRATEGY=overlay`
+    - For each terrain22 group, write one union polygon (if non-empty) and ALSO copy original polygons that are disjoint from that union (no overlap). This means union-representable area is compacted, while union-missed polygons are kept as-is — all within the same part and group.
 
-PMTiles / tippecanoe (tiles) | PMTiles / tippecanoe（タイル生成）
+  - Overlay-difference: `HYBRID_UNION=1 HYBRID_STRATEGY=overlay_diff DIFF_MIN_AREA=<meters^2>`
+    - Similar to overlay, but for partially overlapping polygons it writes only the leftover piece `ST_Difference(original, union)` instead of copying the whole original. You can filter tiny slivers by setting `DIFF_MIN_AREA` (omit to keep all leftovers).
 
-- Makefile provides a `pmtiles` target to build tiles from `data/terrain22.fgb`:
+  - Ratio strategy: `HYBRID_UNION=1 HYBRID_STRATEGY=ratio RETAIN_RATIO=0.90`
+    - For each group, if the union keeps at least RETAIN_RATIO of the original area, output only the union; otherwise copy all original polygons for that group. This is coarser but simpler.
 
-  - Basic usage:
+  - Disable hybrid: `HYBRID_UNION=0` (or `HYBRID_STRATEGY=off`)
+    - Always output union results (dropping NULL/empty unions).
 
-    make pmtiles
+Usage examples:
 
-  - This calls `tippecanoe` to produce `data/terrain22.pmtiles` directly (newer `tippecanoe` builds such as felt/tippecanoe support writing `.pmtiles` and reading FlatGeobuf input). If your `tippecanoe` does not support `.pmtiles`, re-run with `TIPPECANOE=<path-to-new-tippecanoe>` or ask to add an MBTiles fallback.
+```sh
+# overlay rescue within each part (default)
+HYBRID_UNION=1 HYBRID_STRATEGY=overlay make unions
 
-  - Configurable variables (can be overridden on the make command line):
+# overlay-difference with sliver filter (>= 10 m^2)
+HYBRID_UNION=1 HYBRID_STRATEGY=overlay_diff DIFF_MIN_AREA=10 make unions
 
-    - `TIPPECANOE` (default: `tippecanoe`) — path to the tippecanoe binary
-    - `TIP_MIN_Z` (default: `6`) — minimum zoom to generate
-    - `TIP_MAX_Z` (default: `8`) — maximum zoom to generate
-    - `TIP_LAYER` (default: `terrain22`) — layer name written into tiles
-    - `TIPPE_OPTS` (default: `--detect-shared-borders --drop-smallest-as-needed --drop-densest-as-needed`) — additional tippecanoe options. Adjust these to control dropping/simplification behavior.
+# ratio-based selection (use union only if it keeps >=95%)
+HYBRID_UNION=1 HYBRID_STRATEGY=ratio RETAIN_RATIO=0.95 make unions
 
-  - Example with overrides:
-
-    TIPPECANOE=/usr/local/bin/tippecanoe TIP_MAX_Z=9 make pmtiles
+# turn off hybrid and force union everywhere
+HYBRID_UNION=0 make unions
+```
 
 PMTiles / tippecanoe（日本語）
 
@@ -87,97 +89,65 @@ PMTiles / tippecanoe（日本語）
   - `TIP_MIN_Z`（デフォルト `6`）— 最小ズーム
   - `TIP_MAX_Z`（デフォルト `8`）— 最大ズーム
   - `TIP_LAYER`（デフォルト `terrain22`）— タイルに設定するレイヤ名
-  - `TIPPE_OPTS`（デフォルト `--detect-shared-borders --drop-smallest-as-needed --drop-densest-as-needed`）— tippecanoe に渡す追加オプション（ドロップ/簡略化の制御用）
+  - `TIPPE_OPTS`（デフォルト `--no-simplification-of-shared-nodes --drop-smallest-as-needed --drop-densest-as-needed`）— tippecanoe に渡す追加オプション（ドロップ/簡略化の制御用）
 
 注意: `tippecanoe` が `.pmtiles` を直接出力できない場合は、`TIPPECANOE` を新しいビルドに切り替えるか、MBTiles を経由して PMTiles に変換するフォールバックを追加できます。必要なら自動フォールバックを Makefile に追加します。
 
-Serve & publish (local + Cloudflare Tunnel) | ローカルとトンネル公開
+ログとしきい値スキャン
+---------------------
+`make pmtiles-area-minzoom-merge` 実行中の tippecanoe 出力は `joblog_pmtiles.txt` に保存され、ビルド後に付属のスクリプト `bin/scan_tippecanoe_log.py` がそのログを解析して、`--maximum-tile-features` を超えたタイル（ズーム/タイル座標/特徴数/しきい値）を `data/pmtiles_over_threshold_tiles.txt` に書き出します。問題のあるタイルを素早く把握するためにこのログを参照してください。
 
-- Start local server (foreground):
+**Local server:**
 
-  make serve
+```sh
+make serve  # http://127.0.0.1:8000
+```
 
-  (or `python3 bin/serve.py --host 127.0.0.1 --port 8000`)
+**Public tunnel** (requires `tunnel/config.yml` setup):
 
-- Verify:
+```sh
+make tunnel
+```
 
-  `curl -I http://127.0.0.1:8000/data/`
+**Files:** See `DOWNLOADABLE.md` for download URLs when tunnel is active.
 
-  `curl -I http://127.0.0.1:8000/parts/`
+## How to serve the files locally and expose them via Cloudflare Tunnel
 
-- Run tunnel (after editing `tunnel/config.yml`):
+If you want to host the `parts/` and `data/` directories from this repository and optionally expose
+them through a Cloudflare Tunnel, follow these steps.
 
-  make tunnel
+1. Start a local static server (Caddy is used in the Makefile):
 
-  (or `bash bin/start_tunnel.sh`)
+```sh
+# from the repository root
+make serve
+```
 
-Downloadable files
+This runs Caddy in the foreground and serves the repository's static files (including `data/` and `parts`).
 
-- See `DOWNLOADABLE.md` for a curated list of files that may be downloaded from `transient.optgeo.org` when the tunnel is active.
+2. Start the Cloudflare Tunnel to expose the local server (Makefile helper):
 
-Cloudflared / Tunnel deployment (brief) | Cloudflared トンネル（簡潔）
+```sh
+# This target runs the helper script to start the tunnel (the script wraps cloudflared).
+make tunnel
+```
 
-- Prerequisites: install `cloudflared` and authenticate your tunnel per Cloudflare docs.
-- 前提: `cloudflared` をインストールし、トンネルを作成・認証してください（Cloudflare の手順に従う）。
+`make tunnel` calls `bin/start_tunnel.sh` which expects a configured `tunnel/config.yml` or the
+Cloudflare credentials set up in your environment. Check `bin/start_tunnel.sh` for specific flags or
+environment variable options.
 
-- Example: run the local server (foreground) and start a tunnel that forwards to it.
+Notes and troubleshooting:
+- Ensure `cloudflared` is installed and you have created/authenticated a Cloudflare tunnel before
+  running `make tunnel`.
+- If `make serve` uses Caddy and you prefer a different static server (Python http.server, nginx,
+  etc.), you can start that manually and then run `make tunnel` to expose it.
+- Use `curl -I http://localhost:2015` (or the local port reported by `make serve`) to check the server.
 
-  1. Run local server:
+## Notes | 注意点
 
-     `python3 bin/serve.py --host 127.0.0.1 --port 8000 --cors-origin https://transient.optgeo.org`
-
-  2. Start cloudflared in another terminal (uses `tunnel/config.yml`):
-
-     `bash bin/start_tunnel.sh`
-
-- Note: Ensure `tunnel/config.yml` has the correct `ingress` service URL (e.g. `http://127.0.0.1:8000/data`).
-- 注意: `tunnel/config.yml` の `ingress` が正しいローカル URL（例: `http://127.0.0.1:8000/data`）を指すようにしてください。
-
-CORS example (allow `transient.optgeo.org`) | CORS 例（transient.optgeo.org を許可）
-
-Run the server and allow requests from the transient.optgeo.org origin:
-
-`python3 bin/serve.py --host 0.0.0.0 --port 8000 --cors-origin https://transient.optgeo.org`
-
-Verify with curl (Origin header):
-
-`curl -I -H "Origin: https://transient.optgeo.org" http://127.0.0.1:8000/data/`
-
-
-Security | セキュリティ
-
-- Protect published hostnames with Cloudflare Access or similar; avoid placing secrets in `data/` or `parts/`.
-- 公開ホストは Cloudflare Access 等で保護してください。`data/` や `parts/` に機密を置かないでください。
-
-Why wrapper changed | ラッパー変更の理由
-
-- `bin/ogr2ogr_id` now forwards SIGINT/SIGTERM to the `ogr2ogr` child and monitors its controller (parent PID); it kills the child if the controller disappears to avoid orphan processes.
-- `bin/ogr2ogr_id` はシグナルを子プロセスに伝播し、親プロセスを監視することで、コントローラが消えたときに ogr2ogr の orphan が残らないようにしています。
-
-Notes / 備考
-
-- Ensure executable bits:
-
-  chmod +x bin/serve.py bin/start_tunnel.sh bin/ogr2ogr_id bin/merge_parts.sh
-
-Cleanup guidance
-- To remove temporary experiment artifacts (pmtiles and per-run logs) created during ad-hoc runs, run:
-
-  ```sh
-  rm -f data/pmtiles_*.log data/*kanto*.pmtiles pmtiles_full_run.log data/pmtiles_full_run.log
-  ```
-
-- Parts safety: `parts/*.fgb` are the canonical per-ID outputs; do not delete them unless you intend to regenerate from source. `bin/ogr2ogr_id` will skip existing parts to avoid unnecessary re-downloads.
-
-- Long-running jobs: use `tmux` / `screen` (see `docs/tmux.md`).
-
-----
-
-Removed background/service templates
-
-To keep the repo focused on simple interactive use, service/unit templates for background execution were removed from the main tree. Use `docs/tmux.md` for long sessions or add your own system service in a private config if needed.
-
-サービスやデーモン用テンプレートはこのリポジトリ本体から削除しています。長時間実行は `docs/tmux.md` を参照するか、必要なら個別に systemd/launchd の設定を用意してください。
+- `parts/*.fgb` are cached; delete to force regeneration
+- Use `docs/tmux.md` for long-running jobs  
+- Ensure scripts are executable: `chmod +x bin/*`
 
 
 Attribution / 出所と謝辞
@@ -195,5 +165,50 @@ Attribution / 出所と謝辞
 - データ出所と謝辞: 本作業で基礎データとして利用した Terrain2021（terrain2021）の Poly データは、国土地理院（GSI）の GISSTAR サービスから提供されています。データ提供者の皆様に感謝します。派生成果物を公開・再利用する際は GISSTAR / Terrain2021 の出典を明記してください。
 
 - 謝辞: GDAL/OGR や FlatGeobuf の開発者・メンテナ、および GeoJSONSeq や FlatGeobuf のストリーミング変換に関するコミュニティの議論に感謝します。
+
+
+## Operational decision: prefer ogr2ogr (no duckdb / no mapshaper)
+
+We will not use duckdb or mapshaper for dissolve in the main pipeline. The postfilter experiment demonstrated functional behavior but produced high per-tile cost and repeated, overlapping dissolves that don't scale well. Instead, accept that parts can contain geometry errors and rely on GDAL/ogr2ogr for any part-level unions or preprocessing. This keeps the pipeline simple and predictable.
+
+### How to revert to the non-dissolve merge (immediate)
+
+Unset `DISSOLVE_TERRAIN22` or set it to `0` when running the merge/pmtiles workflow. Examples:
+
+```sh
+# merge without postfilter / dissolve (safe default)
+DISSOLVE_TERRAIN22=0 make merge
+
+# pmtiles build without postfilter dissolve
+DISSOLVE_TERRAIN22=0 TIP_MIN_Z=0 TIP_MAX_Z=12 make pmtiles
+```
+
+### Part-level union with ogr2ogr (optional, per-part)
+
+If you later want a per-part, attribute-based union (precompute low-zoom geometries once), use ogr2ogr's SQLite dialect to run a ST_Union per attribute. Example (replace `layername` and `attr` as appropriate):
+
+```sh
+# find layer name:
+ogrinfo -ro -al parts/101.fgb
+
+# run union by attribute (writes GeoJSON with one feature per attribute value)
+ogr2ogr -f GeoJSON /tmp/part101_union.geojson parts/101.fgb -dialect sqlite -sql \
+  "SELECT ST_Union(geometry) AS geometry, \"gcluster.REGIONID\" AS regionid FROM \"OGRGeoJSON\" GROUP BY \"gcluster.REGIONID\""
+
+# optionally convert back to FlatGeobuf
+ogr2ogr -f FlatGeobuf parts/101_union.fgb /tmp/part101_union.geojson
+```
+
+Notes:
+
+- The SQL dialect and layer name may vary depending on GDAL versions and the datasource driver. Use `ogrinfo -al` to inspect the source layer name and attribute names.
+- This approach accepts some geometry errors; repair steps can be added to `bin/fix_parts_fgb.sh` when needed. Precomputing per-part unions is a one-time or infrequent cost and avoids per-tile repetition.
+
+### Policy summary
+
+- Default behavior: non-dissolve merge (`DISSOLVE_TERRAIN22=0`). Use `make merge` / `make pmtiles` as usual. For low-zoom optimized output, prefer `make pmtiles-union` after `make unions`.
+- For precomputed low-zoom simplification, prefer ogr2ogr per-part unions (as above) rather than a tile-local postfilter.
+
+If you'd like, I can run a single part-level union using `ogr2ogr` now (e.g. for `parts/101.fgb`) and report timing and the resulting feature count. Otherwise we can continue with the non-dissolve merge immediately.
 
 

@@ -15,12 +15,14 @@ pipeline: produce-fgb-parts pmtiles-area-minzoom-merge
 pmtiles-area-minzoom-merge: bin/pmtiles_area_minzoom_merge.sh parts/*.fgb
 	@echo "Merging parts/*.fgb -> data/terrain22.pmtiles with area-based minzoom (single tippecanoe run)"
 	@mkdir -p data
-	@TIPPECANOE="$(TIPPECANOE)" TIPPE_OPTS="$(TIPPE_OPTS)" TIP_MIN_Z=1 TIP_MAX_Z=12 \
+	TIPPECANOE="$(TIPPECANOE)" TIPPE_OPTS="$(TIPPE_OPTS)" TIP_MIN_Z=1 TIP_MAX_Z=12 \
 	SNAP_GRID_METERS=$(AREA_MINZOOM_SNAP_METERS) PRE_SIMPLIFY_METERS=$(AREA_MINZOOM_PRE_SIMPLIFY_METERS) \
 	MZ1_MIN=$(AREA_MINZOOM_MZ1_MIN) MZ2_MIN=$(AREA_MINZOOM_MZ2_MIN) MZ3_MIN=$(AREA_MINZOOM_MZ3_MIN) MZ4_MIN=$(AREA_MINZOOM_MZ4_MIN) MZ5_MIN=$(AREA_MINZOOM_MZ5_MIN) \
 	OUTPUT_PMTILES=data/terrain22.pmtiles \
-	./bin/pmtiles_area_minzoom_merge.sh
-	@echo "Done: data/terrain22.pmtiles"
+	# Run the merge script, capture stdout/stderr to a pmtiles build log, then parse that log
+	./bin/pmtiles_area_minzoom_merge.sh 2>&1 | tee joblog_pmtiles.txt ; \
+	python3 bin/scan_tippecanoe_log.py joblog_pmtiles.txt || true
+	@echo "Done: data/terrain22.pmtiles (log: joblog_pmtiles.txt, tiles over threshold: data/pmtiles_over_threshold_tiles.txt)"
 
 
 produce-fgb-parts: ids.txt bin/ogr2ogr_id
