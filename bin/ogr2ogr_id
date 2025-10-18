@@ -35,6 +35,12 @@ if [ "${RUN:-0}" != "1" ]; then
   exit 0
 fi
 
+# Temp output file (unique per process) to avoid leaving partial files if interrupted
+# Ensure the temp outfile ends with .fgb so ogr2ogr writes a flatgeobuf file
+# and doesn't create a directory dataset (which happens when the name lacks the .fgb extension).
+TMP_OUTFILE="${OUTFILE}.tmp.$$.fgb"
+
+
 # Remember the parent PID (the process that launched this script). If that PID disappears
 # we assume the controller died and we should kill the child to avoid orphaned ogr2ogr.
 CONTROLLER_PID=$PPID
@@ -47,6 +53,11 @@ kill_child_and_exit() {
     sleep 2
     kill -KILL "${CHILD_PID}" 2>/dev/null || true
   fi
+  # clean up any temporary outfile left behind by this process
+  if [ -n "${TMP_OUTFILE:-}" ] && [ -f "${TMP_OUTFILE}" ]; then
+    echo "Removing temporary outfile ${TMP_OUTFILE}" >&2
+    rm -f "${TMP_OUTFILE}" || true
+  fi
   exit 130
 }
 
@@ -56,8 +67,17 @@ trap 'kill_child_and_exit' INT TERM
 # Environment variables to control retry behavior:
 # OGR2OGR_RETRIES: number of additional attempts after the first (default: 2)
 # OGR2OGR_BACKOFF: seconds to sleep between attempts (default: 5)
-RETRIES=${OGR2OGR_RETRIES:-2}
-BACKOFF=${OGR2OGR_BACKOFF:-5}
+if [ -z "${OGR2OGR_RETRIES:-}" ]; then
+  RETRIES=2
+else
+  RETRIES="${OGR2OGR_RETRIES}"
+fi
+
+if [ -z "${OGR2OGR_BACKOFF:-}" ]; then
+  BACKOFF=5
+else
+  BACKOFF="${OGR2OGR_BACKOFF}"
+fi
 
 attempt=0
 while :; do
@@ -65,7 +85,9 @@ while :; do
   echo "Starting ogr2ogr attempt ${attempt}/$((RETRIES+1)) for ID=${ID} -> ${OUTFILE}"
 
   # Start ogr2ogr as a child so we can manage it
-  ogr2ogr -f FlatGeobuf -nlt PROMOTE_TO_MULTI -skipfailures -progress -sql "${SQL}" "${OUTFILE}" "${SRC}" &
+  # write to a temp file first (with .fgb extension), then rename into place on success to ensure atomicity
+  TMP_OUTFILE="${OUTFILE}.tmp.$$.fgb"
+  ogr2ogr -f FlatGeobuf -nlt PROMOTE_TO_MULTI -skipfailures -progress -sql "${SQL}" "${TMP_OUTFILE}" "${SRC}" &
   CHILD_PID=$!
 
   # Monitor loop: wait for child, and also check if controller PID is gone (reparented to 1)
@@ -82,7 +104,9 @@ while :; do
   wait ${CHILD_PID}
   ret=$?
   if [ $ret -eq 0 ]; then
-    echo "ogr2ogr succeeded for ID=${ID} on attempt ${attempt}"
+    # Move tmp into final place atomically
+    mv -f "${TMP_OUTFILE}" "${OUTFILE}"
+    echo "ogr2ogr succeeded for ID=${ID} on attempt ${attempt}; moved ${TMP_OUTFILE} -> ${OUTFILE}"
     exit 0
   fi
 
@@ -96,10 +120,18 @@ while :; do
       sleep 2
       kill -KILL "${CHILD_PID}" 2>/dev/null || true
     fi
+    # remove temporary outfile on failure so subsequent attempts start clean
+    if [ -f "${TMP_OUTFILE}" ]; then
+      rm -f "${TMP_OUTFILE}" || true
+    fi
     sleep ${BACKOFF}
     continue
   else
     echo "All attempts exhausted for ID=${ID}. Giving up." >&2
+    # cleanup temporary file if present
+    if [ -f "${TMP_OUTFILE}" ]; then
+      rm -f "${TMP_OUTFILE}" || true
+    fi
     exit $ret
   fi
 done

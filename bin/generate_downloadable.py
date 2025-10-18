@@ -1,57 +1,22 @@
 #!/usr/bin/env python3
-"""Generate DOWNLOADABLE.md by probing transient.optgeo.org for each local .fgb.
-
-Behavior:
-- enumerate parts/*.fgb and data/*.fgb
-- for each file, perform HTTP HEAD to https://transient.optgeo.org/<path>
-- collect Content-Length and Last-Modified when possible
-- fallback to local stat for size and mtime if HEAD fails
-- write Markdown to DOWNLOADABLE.md
-
-Uses only standard library modules.
 """
+Generate DOWNLOADABLE.md listing files in parts/*.fgb and data/*.fgb.
+
+- Try HEAD against https://transient.optgeo.org to get size/last-modified
+  (fallback to local stat if unreachable)
+- Extract CRS via osgeo.ogr if available, otherwise parse `ogrinfo -so` output
+- If data/*.fgb CRS is unknown, infer from the most common parts/*.fgb CRS
+"""
+
 import os
-import sys
+import subprocess
 import urllib.request
-import urllib.error
-import socket
+from collections import Counter
 from datetime import datetime
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 OUT = os.path.join(ROOT, 'DOWNLOADABLE.md')
 HOST = 'https://transient.optgeo.org'
-
-
-def probe_head(url, timeout=10):
-    req = urllib.request.Request(url, method='HEAD', headers={'User-Agent': 'terrain2021-generator/1.0'})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            headers = {k.lower(): v for k, v in r.getheaders()}
-            size = headers.get('content-length')
-            lm = headers.get('last-modified')
-            return size, lm
-    except (urllib.error.URLError, socket.timeout, ValueError):
-        return None, None
-
-
-def format_size(sz):
-    try:
-        n = int(sz)
-    except Exception:
-        return sz or 'unknown'
-    for unit in ('B', 'KiB', 'MiB', 'GiB', 'TiB'):
-        if n < 1024:
-            return f"{n}{unit}"
-        n = n // 1024
-    return f"{n}PiB"
-
-
-def stat_local(path):
-    try:
-        st = os.stat(path)
-        return str(st.st_size), datetime.utcfromtimestamp(st.st_mtime).strftime('%a, %d %b %Y %H:%M:%S GMT')
-    except Exception:
-        return None, None
 
 
 def collect_files():
@@ -72,30 +37,117 @@ def collect_files():
     return files
 
 
+def probe_head(url, timeout=8):
+    req = urllib.request.Request(url, method='HEAD', headers={'User-Agent': 'terrain2021-generator/1.0'})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            headers = {k.lower(): v for k, v in r.getheaders()}
+            return headers.get('content-length'), headers.get('last-modified')
+    except Exception:
+        return None, None
+
+
+def stat_local(path):
+    try:
+        st = os.stat(path)
+        return str(st.st_size), datetime.utcfromtimestamp(st.st_mtime).strftime('%a, %d %b %Y %H:%M:%S GMT')
+    except Exception:
+        return None, None
+
+
+def extract_crs_with_ogrinfo(path):
+    try:
+        thr = 50 * 1024 * 1024
+        use_full = os.path.getsize(path) <= thr
+    except Exception:
+        use_full = False
+    cmd = ['ogrinfo', '-al', '-so', path] if use_full else ['ogrinfo', '-so', path]
+    try:
+        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=20)
+        out = p.stdout or ''
+    except Exception:
+        return 'ogrinfo-unavailable'
+    import re
+    m = re.search(r'AUTHORITY\s*\[\s*["\']?EPSG["\']?\s*,\s*["\'](\d{3,6})["\']\s*\]', out, re.IGNORECASE)
+    if not m:
+        m = re.search(r'ID\s*\[\s*["\']?EPSG["\']?\s*,\s*["\']?(\d{3,6})["\']?\s*\]', out, re.IGNORECASE)
+    if not m:
+        m = re.search(r'\bEPSG\s*[:=\s]\s*["\']?(\d{3,6})["\']?', out, re.IGNORECASE)
+    if m:
+        return f'EPSG:{m.group(1)}'
+    for line in out.splitlines():
+        if any(k in line for k in ('PROJCRS', 'PROJCS', 'GEOGCS', 'Coordinate System is', 'WGS 84', 'Lambert')):
+            return line.strip()
+    return None
+
+
+def format_size(sz):
+    try:
+        n = int(sz)
+    except Exception:
+        return sz or 'unknown'
+    for unit in ('B', 'KiB', 'MiB', 'GiB', 'TiB'):
+        if n < 1024:
+            return f"{n}{unit}"
+        n //= 1024
+    return f"{n}PiB"
+
+
 def main():
     files = collect_files()
-    lines = []
-    lines.append('# Downloadable files')
-    lines.append('')
-    lines.append('Below is a generated list of FlatGeobuf files (paths point to transient.optgeo.org).')
-    lines.append('')
-    current_group = None
+    meta = {}
     for group, fn in files:
-        if group != current_group:
-            lines.append(f'## {group}')
-            lines.append('')
-            current_group = group
-        rel = f'/{group}/{fn}' if group == 'parts' else f'/{group}/{fn}'
+        rel = f'/{group}/{fn}'
         url = HOST + rel
         size, lm = probe_head(url)
         if size is None:
             lsize, llm = stat_local(os.path.join(ROOT, group, fn))
             size = lsize or 'unknown'
             lm = llm or 'unknown'
-        hsize = format_size(size)
-        lm_display = lm
-        lines.append(f'- [{group}/{fn}]({url}) — {hsize}, last-modified: {lm_display}')
-    lines.append('')
+        hsize = format_size(size) if size and size.isdigit() else (size or 'unknown')
+        local_path = os.path.join(ROOT, group, fn)
+        crs = 'unknown'
+        try:
+            from osgeo import ogr
+            ds = ogr.Open(local_path)
+            if ds is not None:
+                lyr = ds.GetLayer(0)
+                if lyr is not None:
+                    sref = lyr.GetSpatialRef()
+                    if sref is not None:
+                        code = None
+                        try:
+                            code = sref.GetAuthorityCode(None)
+                            auth = sref.GetAuthorityName(None)
+                        except Exception:
+                            code = None
+                            auth = None
+                        if code:
+                            crs = f'{auth}:{code}' if auth else f'EPSG:{code}'
+        except Exception:
+            pass
+        if crs == 'unknown':
+            c2 = extract_crs_with_ogrinfo(local_path)
+            if c2:
+                crs = c2
+        meta[(group, fn)] = {'url': url, 'hsize': hsize, 'lm': lm or 'unknown', 'crs': crs}
+
+    parts_crs = [v['crs'] for k, v in meta.items() if k[0] == 'parts' and v['crs'] not in ('unknown', 'ogrinfo-unavailable')]
+    parts_mode = Counter(parts_crs).most_common(1)[0][0] if parts_crs else None
+
+    lines = ['# Downloadable files', '', 'Below is a generated list of FlatGeobuf files (paths point to transient.optgeo.org).', '']
+    cur = None
+    for group, fn in files:
+        if group != cur:
+            lines.append(f'## {group}')
+            lines.append('')
+            cur = group
+        info = meta[(group, fn)]
+        crs = info['crs']
+        if group == 'data' and crs == 'unknown' and parts_mode:
+            crs = f'inferred:{parts_mode}'
+        lines.append(f'- [{group}/{fn}]({info["url"]}) — {info["hsize"]}, last-modified: {info["lm"]}, CRS: {crs}')
+        lines.append('')
     lines.append('Note: availability depends on the tunnel/server and Cloudflare; use `curl -I` / `curl -X OPTIONS` for quick checks.')
     content = '\n'.join(lines) + '\n'
     with open(OUT, 'w', encoding='utf-8') as f:

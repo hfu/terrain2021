@@ -7,6 +7,7 @@ import argparse
 import http.server
 import os
 import socketserver
+import shutil
 from urllib.parse import unquote, urlparse
 
 # Global CORS origin value set in main() via --cors-origin
@@ -20,6 +21,23 @@ class MultiStaticHandler(http.server.SimpleHTTPRequestHandler):
         parsed = urlparse(path)
         path = unquote(parsed.path)
         cwd = os.getcwd()
+        # Prefer routing by Host header for nicer tunnel mappings. Example:
+        #  - data.transient.optgeo.org -> serve files from ./data as root
+        #  - parts.transient.optgeo.org -> serve files from ./parts as root
+        host = self.headers.get('Host', '')
+        # strip optional port
+        host = host.split(':')[0]
+        if host == 'data.transient.optgeo.org':
+            # map root paths to data/
+            relpath = path.lstrip('/')
+            target = os.path.join(cwd, 'data', relpath)
+            return os.path.normpath(target)
+        if host == 'parts.transient.optgeo.org':
+            relpath = path.lstrip('/')
+            target = os.path.join(cwd, 'parts', relpath)
+            return os.path.normpath(target)
+
+        # Fallback: explicit /data or /parts prefix routing (manual local use)
         if path.startswith('/data/') or path == '/data':
             relpath = path[len('/data/'):]
             target = os.path.join(cwd, 'data', relpath)
@@ -61,6 +79,19 @@ class MultiStaticHandler(http.server.SimpleHTTPRequestHandler):
         except Exception:
             pass
         super().end_headers()
+
+    def copyfile(self, source, outputfile):
+        """Copy data from source to outputfile while suppressing client disconnect errors.
+
+        Wrapping shutil.copyfileobj in a try/except prevents a full traceback
+        from being printed to the server log when the client closes the
+        connection (BrokenPipeError / ConnectionResetError).
+        """
+        try:
+            shutil.copyfileobj(source, outputfile)
+        except (BrokenPipeError, ConnectionResetError):
+            # Client disconnected prematurely; ignore and return quietly.
+            return
 
     def do_OPTIONS(self):
         # Respond to preflight requests

@@ -1,0 +1,38 @@
+:8000 {
+	# Handle CORS preflight explicitly so OPTIONS doesn't hit file_server
+	@preflight {
+		method OPTIONS
+		path /data/* /parts/*
+	}
+	handle @preflight {
+		header Access-Control-Allow-Origin "*"
+		header Access-Control-Allow-Methods "GET, OPTIONS"
+		header Access-Control-Allow-Headers "Range, Accept, Content-Type"
+		respond 204
+	}
+
+	# Serve only .fgb files under /data and /parts
+	@fgb_files {
+		path_regexp fgb ^/(data|parts)/.*\.fgb$
+	}
+	handle @fgb_files {
+		root * .
+		header Access-Control-Allow-Origin "*"
+		header Access-Control-Allow-Methods "GET, OPTIONS"
+		header Access-Control-Allow-Headers "Range, Accept, Content-Type"
+		file_server
+	}
+
+	# For other requests under /data or /parts, return 404 to avoid exposing repo
+	@data_parts {
+		path /data/* /parts/*
+	}
+	handle @data_parts {
+		respond "Not Found" 404
+	}
+
+	# All other requests: default 404
+	handle {
+		respond "Not Found" 404
+	}
+}

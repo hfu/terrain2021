@@ -1,0 +1,13 @@
+# Sample Cloudflare Tunnel config for serving the repository's data
+# Replace <TUNNEL-UUID> with your tunnel ID and ensure credentials file path is correct.
+# Save as tunnel/config.yml after editing.
+
+tunnel: <TUNNEL-UUID>
+credentials-file: /path/to/credentials.json
+
+ingress:
+  - hostname: data.example.com
+    service: http://127.0.0.1:8000/data
+  - hostname: parts.example.com
+    service: http://127.0.0.1:8000/parts
+  - service: http_status:404

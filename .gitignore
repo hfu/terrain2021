@@ -4,8 +4,20 @@
 # Ignore data directory contents (but keep directory)
 data/
 !data/.gitkeep
+
+# Ignore job logs and temporary files
 joblog.txt
+joblog_pmtiles.txt
+*.log
+*.tmp
+*.bak
+*~
 .DS_Store
+
+# Ignore logs directory contents but keep structure
+logs/*.log
+logs/*.txt
+logs/pmtiles_scan/
 
 # Do not commit tunnel credentials/config (may contain UUIDs / secrets)
 tunnel/config.yml
