@@ -9,7 +9,7 @@ set -euo pipefail
 # Env:
 #   OUTPUT_PMTILES (default: data/terrain22.pmtiles)
 #   TIPPECANOE (default: tippecanoe)
-#   TIP_MIN_Z (default: 1), TIP_MAX_Z (default: 8), TIP_LAYER (default: terrain22)
+#   TIP_MIN_Z (default: 1), TIP_MAX_Z (default: 12), TIP_LAYER (default: terrain22)
 #   TIPPE_OPTS (falls back to safe coverage-friendly defaults if empty)
 #   PRE_SIMPLIFY_METERS, SNAP_GRID_METERS, SEGMENTIZE_METERS (optional pre-clean)
 #   MZ1_MIN..MZ5_MIN bucket thresholds (m^2)
@@ -17,7 +17,7 @@ set -euo pipefail
 OUTPUT_PMTILES=${OUTPUT_PMTILES:-data/terrain22.pmtiles}
 TIPPECANOE=${TIPPECANOE:-tippecanoe}
 TIP_MIN_Z=${TIP_MIN_Z:-1}
-TIP_MAX_Z=${TIP_MAX_Z:-8}
+TIP_MAX_Z=${TIP_MAX_Z:-12}
 TIP_LAYER=${TIP_LAYER:-terrain22}
 
 # Default tippecanoe options tuned for low-zoom coverage
