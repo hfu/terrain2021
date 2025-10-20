@@ -93,7 +93,7 @@ Direct .pmtiles generation from FlatGeobuf using tippecanoe.
 
 tippecanoe で FlatGeobuf から直接 .pmtiles を生成。
 
-- Variables: `TIPPECANOE`, `TIP_MIN_Z` (6), `TIP_MAX_Z` (12), `TIP_LAYER` (terrain22), `TIPPE_OPTS`.
+- Variables: `TIPPECANOE`, `TIP_MIN_Z` (1), `TIP_MAX_Z` (12), `TIP_LAYER` (terrain22), `TIPPE_OPTS`.
 
 ## Log and Threshold Scan | ログとしきい値スキャン
 
