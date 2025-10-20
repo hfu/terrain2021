@@ -51,7 +51,7 @@ PRE_SIMPLIFY_METERS=20 make pmtiles-area-minzoom-merge
 
 **Output:** Single `data/terrain22.pmtiles` file (zoom 1-12) optimized for web serving.
 
-**Current Progress:** 53/68 parts completed. Remaining IDs: 12, 13, 14, 15, 29, 31, 35, 42, 43, 45, 56_2, 62, 64, 72, 74, 77.
+**Current Progress:** 54/68 parts completed. Remaining IDs: 12, 13, 14, 15, 29, 35, 42, 43, 45, 56_2, 62, 64, 72, 74.
 
 ## Martin Server (v0.19.3) | Martin サーバー (v0.19.3)
 
