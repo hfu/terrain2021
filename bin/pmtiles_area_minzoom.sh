@@ -11,7 +11,7 @@ set -euo pipefail
 #   TIPPECANOE          (default: tippecanoe)
 #   TIP_LAYER           (default: terrain22)
 #   TIP_MIN_Z           (default: 1)
-#   TIP_MAX_Z           (default: 8)
+#   TIP_MAX_Z           (default: 12)
 #   TIPPE_OPTS          (default includes --force and coverage-friendly opts)
 #   PRE_SIMPLIFY_METERS (optional: ST_SimplifyPreserveTopology before reprojection)
 #   SNAP_GRID_METERS    (optional: ST_SnapToGrid before simplify)
@@ -24,7 +24,7 @@ OUTPUT_PMTILES=${OUTPUT_PMTILES:-data/terrain22_41.pmtiles}
 TIPPECANOE=${TIPPECANOE:-tippecanoe}
 TIP_LAYER=${TIP_LAYER:-terrain22}
 TIP_MIN_Z=${TIP_MIN_Z:-1}
-TIP_MAX_Z=${TIP_MAX_Z:-8}
+TIP_MAX_Z=${TIP_MAX_Z:-12}
 
 # Ensure tippecanoe gets --force and large byte budget defaults unless overridden
 if echo "${TIPPE_OPTS:-}" | grep -q -- --force; then
