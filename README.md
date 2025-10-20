@@ -41,7 +41,7 @@ Stop with Ctrl-C | Ctrl-C で停止
 
 The production pipeline uses area-based per-feature minzoom assignment to preserve small urban polygons while controlling tile density at low zoom levels.
 
-**Build:** `make pipeline` runs `produce` → `pmtiles-area-minzoom-merge` and writes `data/terrain22.pmtiles`
+**Build:** `make pipeline` runs `produce-fgb-parts` → `pmtiles-area-minzoom-merge` and writes `data/terrain22.pmtiles`
 
 **Parameters:** Production defaults are locked in Makefile variables. Override on command line if needed:
 ```sh
